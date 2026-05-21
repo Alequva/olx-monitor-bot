@@ -13,9 +13,18 @@ class BotScheduler:
         self.bot = bot
         self.scheduler = AsyncIOScheduler()
         self._tasks = {}
+        self._ads_sent = 0
+        self._prev_user_count = 0
 
     def start(self):
         self._schedule_all()
+        self._prev_user_count = len(get_all_active_users())
+        self.scheduler.add_job(
+            self.log_stats,
+            trigger=IntervalTrigger(minutes=30),
+            id="stats_log",
+            replace_existing=True,
+        )
         self.scheduler.start()
         logger.info("Scheduler started")
 
@@ -47,9 +56,23 @@ class BotScheduler:
     async def _run_check(self, user_id: int):
         from bot.handlers import run_periodic_check
         try:
-            await run_periodic_check(self.bot)
+            count = await run_periodic_check(self.bot)
+            self._ads_sent += count
         except Exception as e:
             logger.error("Periodic check error for user %d: %s", user_id, e)
+
+    async def log_stats(self):
+        current_count = len(get_all_active_users())
+        diff = current_count - self._prev_user_count
+        diff_str = f"+{diff}" if diff > 0 else str(diff) if diff < 0 else "0"
+        logger.info(
+            "===== STATS =====\n"
+            "Active users: %d (%s since last check)\n"
+            "Ads sent this session: %d\n"
+            "==================",
+            current_count, diff_str, self._ads_sent,
+        )
+        self._prev_user_count = current_count
 
     def shutdown(self):
         self.scheduler.shutdown(wait=False)
