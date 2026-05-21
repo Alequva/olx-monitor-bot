@@ -20,16 +20,17 @@ def init_db():
     conn = get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id    INTEGER PRIMARY KEY,
-            chat_id    INTEGER NOT NULL,
-            category   TEXT    DEFAULT 'arenda-dolgosrochnaya',
-            price_min  INTEGER DEFAULT 0,
-            price_max  INTEGER DEFAULT 0,
-            location   TEXT    DEFAULT '',
-            rooms      TEXT    DEFAULT '',
-            interval_m INTEGER DEFAULT 30,
-            is_active  INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            user_id      INTEGER PRIMARY KEY,
+            chat_id      INTEGER NOT NULL,
+            category     TEXT    DEFAULT 'arenda-dolgosrochnaya',
+            price_min    INTEGER DEFAULT 0,
+            price_max    INTEGER DEFAULT 0,
+            location     TEXT    DEFAULT '',
+            rooms        TEXT    DEFAULT '',
+            interval_m   INTEGER DEFAULT 30,
+            backlog_days INTEGER DEFAULT 7,
+            is_active    INTEGER DEFAULT 1,
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS sent_posts (
@@ -41,6 +42,12 @@ def init_db():
             UNIQUE(user_id, post_url)
         );
     """)
+
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN backlog_days INTEGER DEFAULT 7")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 

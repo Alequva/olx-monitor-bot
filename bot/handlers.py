@@ -1,23 +1,28 @@
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery
 
+from config import PAGE_SIZE
 from db.database import (
     register_user, get_user, update_user,
     is_post_sent, mark_post_sent, get_all_active_users,
 )
 from scraper.olx import scrape_for_user
+from scraper.parser import ParsedAd
 from bot.keyboards import (
-    ad_keyboard, interval_keyboard,
-    category_keyboard, rooms_keyboard,
+    ad_keyboard, interval_keyboard, category_keyboard,
+    rooms_keyboard, backlog_keyboard, load_more_keyboard,
 )
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+_search_cache: dict[int, dict] = {}
 
 
 class FilterSetup(StatesGroup):
@@ -40,7 +45,8 @@ async def cmd_start(message: Message):
         "and send them to you instantly.\n\n"
         "Commands:\n"
         "/filters — Set your search filters\n"
-        "/search_now — Run a search immediately\n"
+        "/search_now — Show cheapest 10 matching listings\n"
+        "/backlog — Set how far back to search (1-30 days)\n"
         "/status — View current filter settings\n"
         "/interval — Change check frequency\n\n"
         "Start by setting up your filters with /filters"
@@ -144,6 +150,25 @@ async def filter_rooms(cq: CallbackQuery, state: FSMContext):
     await cq.answer()
 
 
+@router.message(Command("backlog"))
+async def cmd_backlog(message: Message):
+    await message.answer(
+        "How far back should I search for listings?",
+        reply_markup=backlog_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("backlog:"))
+async def set_backlog(cq: CallbackQuery):
+    days = int(cq.data.split(":", 1)[1])
+    user_id = cq.from_user.id
+    update_user(user_id, backlog_days=days)
+    await cq.message.edit_text(
+        f"✅ Will search up to {days} day{'s' if days > 1 else ''} back."
+    )
+    await cq.answer()
+
+
 @router.message(Command("search_now"))
 async def cmd_search_now(message: Message):
     user_id = message.from_user.id
@@ -152,7 +177,7 @@ async def cmd_search_now(message: Message):
         await message.answer("Please set up filters first with /filters")
         return
 
-    await message.answer("🔍 Searching OLX.uz... This may take a moment.")
+    msg = await message.answer("🔍 Searching OLX.uz for the best deals...")
 
     ads = await scrape_for_user(
         category=user["category"],
@@ -160,21 +185,93 @@ async def cmd_search_now(message: Message):
         price_max=user["price_max"],
         location=user["location"],
         rooms=user["rooms"],
-        backfill=False,
+        backlog_days=user["backlog_days"],
+        single_page=False,
     )
 
-    new_count = 0
-    for ad in ads:
-        if is_post_sent(user_id, ad.post_url):
-            continue
-        await send_ad(message.bot, message.chat.id, ad)
-        mark_post_sent(user_id, ad.post_url, ad.title)
-        new_count += 1
+    if not ads:
+        await msg.edit_text(
+            "No listings found matching your filters in the last "
+            f"{user['backlog_days']} day(s)."
+        )
+        return
 
-    if new_count == 0:
-        await message.answer("No new listings found matching your filters.")
+    ads.sort(key=lambda a: (
+        a.price_usd if a.price_usd is not None else float("inf")
+    ))
+
+    _search_cache[user_id] = {
+        "results": ads,
+        "offset": 0,
+        "chat_id": message.chat.id,
+    }
+
+    await _send_batch(message.bot, user_id)
+
+
+@router.callback_query(F.data.startswith("load_more:"))
+async def load_more(cq: CallbackQuery):
+    user_id = int(cq.data.split(":", 1)[1])
+    if user_id not in _search_cache:
+        await cq.answer("Search results expired. Run /search again.", show_alert=True)
+        return
+
+    await cq.answer()
+    await _send_batch(cq.bot, user_id)
+
+
+async def _send_batch(bot, user_id: int):
+    cache = _search_cache.get(user_id)
+    if not cache:
+        return
+
+    results = cache["results"]
+    offset = cache["offset"]
+    batch = results[offset:offset + PAGE_SIZE]
+
+    if not batch:
+        await bot.send_message(
+            cache["chat_id"],
+            "No more listings to show."
+        )
+        del _search_cache[user_id]
+        return
+
+    cache["offset"] = offset + len(batch)
+
+    total = len(results)
+    shown = cache["offset"]
+
+    header = (
+        f"Showing {shown - len(batch) + 1}–{min(shown, total)} of {total} "
+        f"cheapest listings\n"
+        f"{'─' * 20}\n"
+    )
+
+    lines = []
+    for i, ad in enumerate(batch, start=offset + 1):
+        price = format_price(ad.price_uzs, ad.price_usd)
+        lines.append(
+            f"<b>{i}.</b> <a href='{ad.post_url}'>{ad.title[:50]}</a>\n"
+            f"   💰 {price} | 📍 {ad.location[:25]} | 📅 {ad.days_ago}"
+        )
+
+    text = header + "\n".join(lines)
+
+    total = len(results)
+    if shown < total:
+        kb = load_more_keyboard(user_id, total, shown)
     else:
-        await message.answer(f"✅ Sent {new_count} new listing(s).")
+        kb = None
+        text += "\n\n✅ All listings shown."
+
+    await bot.send_message(
+        cache["chat_id"],
+        text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=kb,
+    )
 
 
 @router.message(Command("status"))
@@ -254,7 +351,8 @@ async def run_periodic_check(bot) -> int:
                 price_max=user["price_max"],
                 location=user["location"],
                 rooms=user["rooms"],
-                backfill=False,
+                backlog_days=user["backlog_days"],
+                single_page=True,
             )
             new_count = 0
             for ad in ads:
@@ -279,9 +377,10 @@ async def run_backfill(bot) -> int:
     total_sent = 0
     for user in users:
         try:
+            days = user["backlog_days"]
             await bot.send_message(
                 user["chat_id"],
-                "🔄 Backfilling listings from the last 7 days..."
+                f"🔄 Backfilling listings from the last {days} day(s)..."
             )
             ads = await scrape_for_user(
                 category=user["category"],
@@ -289,7 +388,8 @@ async def run_backfill(bot) -> int:
                 price_max=user["price_max"],
                 location=user["location"],
                 rooms=user["rooms"],
-                backfill=True,
+                backlog_days=days,
+                single_page=False,
             )
             new_count = 0
             for ad in ads:
@@ -302,12 +402,14 @@ async def run_backfill(bot) -> int:
             if new_count == 0:
                 await bot.send_message(
                     user["chat_id"],
-                    "✅ Backfill complete — no matching listings found in the last 7 days."
+                    f"✅ Backfill complete — no matching listings "
+                    f"found in the last {days} day(s)."
                 )
             else:
                 await bot.send_message(
                     user["chat_id"],
-                    f"✅ Backfill complete — found {new_count} matching listing(s)."
+                    f"✅ Backfill complete — found {new_count} "
+                    f"matching listing(s)."
                 )
         except Exception as e:
             logger.error("Backfill error for user %d: %s", user["user_id"], e)
@@ -337,6 +439,7 @@ def format_filters(data) -> str:
     loc = data.get("location", "") or "Any"
     rooms = data.get("rooms", "") or "Any"
     interval = data.get("interval_m", 30)
+    backlog = data.get("backlog_days", 7)
 
     return (
         f"📋 <b>Your Filters</b>\n"
@@ -345,6 +448,7 @@ def format_filters(data) -> str:
         f" - {'$' + str(pmax) if isinstance(pmax, int) else pmax}\n"
         f"• Location: {loc}\n"
         f"• Rooms: {rooms}\n"
+        f"• Lookback: {backlog} day{'s' if backlog > 1 else ''}\n"
         f"• Check interval: every {interval} min"
     )
 

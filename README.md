@@ -107,7 +107,8 @@ docker compose down
 |---|---|
 | `/start` | Welcome message + command overview |
 | `/filters` | Interactive filter setup (category → price → location → rooms) |
-| `/search_now` | Run an immediate search with current filters |
+| `/search_now` | Show 10 cheapest matching listings with "Load more" pagination |
+| `/backlog` | Set search period (1–30 days back) |
 | `/status` | Show current filter configuration |
 | `/interval` | Change periodic check frequency |
 
@@ -193,6 +194,14 @@ docker compose down
 - [x] Added city name translations for location filter (Tashkent→Ташкент, etc.)
 - [x] Fixed `sqlite3.Row` `.get()` AttributeError in `format_filters`
 - [x] Fixed startup coroutine not being awaited
+
+### 2026-05-21 — Pagination + Backlog Period
+
+- [x] `/search_now` now shows 10 cheapest listings with "Load next 10" button
+- [x] Added `/backlog` command with inline keyboard (1, 3, 7, 14, 30 days)
+- [x] Search results cached in memory for pagination
+- [x] Backfill respects user's `backlog_days` setting
+- [x] Added `backlog_days` column to users table
 
 ## License
 

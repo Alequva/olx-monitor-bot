@@ -35,3 +35,21 @@ def rooms_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="Any (skip)", callback_data="rooms:any")
     builder.adjust(2)
     return builder.as_markup()
+
+
+def backlog_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for days in [1, 3, 7, 14, 30]:
+        builder.button(text=f"{days} day{'s' if days > 1 else ''}", callback_data=f"backlog:{days}")
+    builder.adjust(3)
+    return builder.as_markup()
+
+
+def load_more_keyboard(user_id: int, total: int, shown: int) -> InlineKeyboardMarkup:
+    remaining = total - shown
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"Load next 10 ({remaining} left)",
+        callback_data=f"load_more:{user_id}",
+    )
+    return builder.as_markup()

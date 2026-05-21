@@ -27,11 +27,9 @@ async def scrape_listings(
     location: str = "",
     rooms: str = "",
     max_pages: int = 1,
-    since: Optional[datetime] = None,
+    backlog_days: int = 7,
 ) -> list[ParsedAd]:
-    if since is None:
-        since = datetime.now(timezone.utc) - timedelta(days=7)
-
+    since = datetime.now(timezone.utc) - timedelta(days=backlog_days)
     results = []
 
     for page in range(1, max_pages + 1):
@@ -84,10 +82,10 @@ async def scrape_for_user(
     price_max: int = 0,
     location: str = "",
     rooms: str = "",
-    backfill: bool = False,
+    backlog_days: int = 7,
+    single_page: bool = False,
 ) -> list[ParsedAd]:
-    max_pages = 50 if backfill else 1
-    since = datetime.now(timezone.utc) - timedelta(days=7) if backfill else None
+    max_pages = 1 if single_page else 50
     return await scrape_listings(
         category=category,
         price_min=price_min,
@@ -95,5 +93,5 @@ async def scrape_for_user(
         location=location,
         rooms=rooms,
         max_pages=max_pages,
-        since=since,
+        backlog_days=backlog_days,
     )
