@@ -6,4 +6,4 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+      - run: curl -X POST --fail "${{ secrets.RENDER_DEPLOY_HOOK }}"
