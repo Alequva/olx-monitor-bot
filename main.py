@@ -36,7 +36,9 @@ async def main():
 
     scheduler = BotScheduler(bot)
 
-    dp.startup.register(lambda: on_startup(bot, scheduler))
+    @dp.startup()
+    async def startup():
+        await on_startup(bot, scheduler)
 
     logger.info("Starting polling...")
     try:

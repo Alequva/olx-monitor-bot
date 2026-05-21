@@ -187,6 +187,13 @@ docker compose down
 - [x] Deduplication (SQLite)
 - [x] Local git repo initialized
 
+### 2026-05-21 — Bugfixes
+
+- [x] Fixed `komnaty` category URL (was 404, now uses search query `/q-комнаты/`)
+- [x] Added city name translations for location filter (Tashkent→Ташкент, etc.)
+- [x] Fixed `sqlite3.Row` `.get()` AttributeError in `format_filters`
+- [x] Fixed startup coroutine not being awaited
+
 ## License
 
 MIT

@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 BASE_LISTING_URL = "https://www.olx.uz/nedvizhimost/kvartiry"
 
@@ -7,8 +7,8 @@ CATEGORY_MAP = {
     "rent": "arenda-dolgosrochnaya",
     "prodazha": "prodazha",
     "sale": "prodazha",
-    "komnaty": "komnaty",
-    "rooms": "komnaty",
+    "komnaty": "q-комнаты",
+    "rooms": "q-комнаты",
 }
 
 ROOMS_MAP = {
@@ -17,6 +17,8 @@ ROOMS_MAP = {
     "3": "trehkomnatnye",
     "4+": "chetyre-i-bolee-komnat",
 }
+
+SEARCH_CATEGORIES = {"q-комнаты"}
 
 
 def build_search_url(
@@ -39,7 +41,7 @@ def build_search_url(
 
     params["search[order]"] = "created_at:desc"
 
-    if rooms:
+    if rooms and cat_slug not in SEARCH_CATEGORIES:
         room_slug = ROOMS_MAP.get(rooms, rooms)
         params["search[filter_enum_rooms][0]"] = room_slug
 
@@ -65,7 +67,40 @@ def is_ad_within_price(ad_price_uzs, ad_price_usd, price_min: int, price_max: in
     return True
 
 
+CITY_ALIASES = {
+    "tashkent": ["ташкент", "toshkent"],
+    "toshkent": ["ташкент", "tashkent"],
+    "samarkand": ["самарканд", "samarqand"],
+    "samarqand": ["самарканд", "samarkand"],
+    "bukhara": ["бухара", "buxoro", "buxara"],
+    "buxoro": ["бухара", "bukhara", "buxara"],
+    "fergana": ["фергана", "farg'ona", "fargona"],
+    "namangan": ["наманган"],
+    "andijan": ["андижан", "andijon"],
+    "nukus": ["нукус"],
+    "urgench": ["ургенч"],
+    "navoi": ["навои", "navoiy"],
+    "jizzakh": ["джизак", "jizzax"],
+    "qarshi": ["карши"],
+    "karshi": ["карши"],
+    "termez": ["термез"],
+    "gulistan": ["гулистан"],
+    "kokand": ["коканд"],
+}
+
+
 def location_matches(ad_location: str, filter_location: str) -> bool:
     if not filter_location:
         return True
-    return filter_location.lower() in ad_location.lower()
+    ad_lower = ad_location.lower()
+    filter_lower = filter_location.lower()
+
+    if filter_lower in ad_lower:
+        return True
+
+    aliases = CITY_ALIASES.get(filter_lower, [])
+    for alias in aliases:
+        if alias in ad_lower:
+            return True
+
+    return False

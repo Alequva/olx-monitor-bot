@@ -324,10 +324,12 @@ def format_price(uzs, usd) -> str:
 
 
 def format_filters(data) -> str:
+    if hasattr(data, "keys"):
+        data = dict(data)
     cat_labels = {
         "arenda-dolgosrochnaya": "Long-term rent",
         "prodazha": "Sale",
-        "komnaty": "Rooms",
+        "q-комнаты": "Rooms",
     }
     cat = cat_labels.get(data.get("category", ""), data.get("category", "Not set"))
     pmin = data.get("price_min", 0) or "No min"
