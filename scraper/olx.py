@@ -1,0 +1,99 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+import httpx
+
+from config import SCRAPER_DELAY, USER_AGENT
+from scraper.parser import parse_listing_page, has_next_page, ParsedAd
+from scraper.filters import build_search_url, is_ad_within_price, location_matches
+
+
+async def fetch_page(url: str) -> Optional[str]:
+    headers = {"User-Agent": USER_AGENT}
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.text
+    except httpx.HTTPError:
+        return None
+
+
+async def scrape_listings(
+    category: str,
+    price_min: int = 0,
+    price_max: int = 0,
+    location: str = "",
+    rooms: str = "",
+    max_pages: int = 1,
+    since: Optional[datetime] = None,
+) -> list[ParsedAd]:
+    if since is None:
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+
+    results = []
+
+    for page in range(1, max_pages + 1):
+        url = build_search_url(
+            category=category,
+            price_min=price_min,
+            price_max=price_max,
+            location=location,
+            rooms=rooms,
+            page=page,
+        )
+
+        html = await fetch_page(url)
+        if not html:
+            break
+
+        ads = parse_listing_page(html)
+        if not ads:
+            break
+
+        page_stale = True
+        for ad in ads:
+            if ad.date >= since - timedelta(days=1):
+                page_stale = False
+
+            if ad.date < since:
+                continue
+
+            if not is_ad_within_price(ad.price_uzs, ad.price_usd, price_min, price_max):
+                continue
+            if not location_matches(ad.location, location):
+                continue
+
+            results.append(ad)
+
+        if page_stale:
+            break
+
+        if not has_next_page(html):
+            break
+
+        await asyncio.sleep(SCRAPER_DELAY)
+
+    return results
+
+
+async def scrape_for_user(
+    category: str,
+    price_min: int = 0,
+    price_max: int = 0,
+    location: str = "",
+    rooms: str = "",
+    backfill: bool = False,
+) -> list[ParsedAd]:
+    max_pages = 50 if backfill else 1
+    since = datetime.now(timezone.utc) - timedelta(days=7) if backfill else None
+    return await scrape_listings(
+        category=category,
+        price_min=price_min,
+        price_max=price_max,
+        location=location,
+        rooms=rooms,
+        max_pages=max_pages,
+        since=since,
+    )
