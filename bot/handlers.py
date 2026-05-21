@@ -29,6 +29,11 @@ router = Router()
 
 _search_cache: dict[int, dict] = {}
 
+_RESTART_MSG = (
+    "🔄 Bot was restarted on the server.\n"
+    "Send /start to restore your settings and access the menu."
+)
+
 
 class FilterSetup(StatesGroup):
     category = State()
@@ -136,7 +141,7 @@ async def menu_interval(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await _show_menu(message, "Please set up filters first.")
+        await _show_menu(message, _RESTART_MSG)
         return
 
     await state.set_state(IntervalSetup.waiting)
@@ -165,6 +170,11 @@ async def set_interval_invalid(message: Message):
 
 @router.message(F.text == "📅 Backlog Days")
 async def menu_backlog(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, _RESTART_MSG)
+        return
     await state.set_state(BacklogSetup.waiting)
     await message.answer(
         "📅 How far back should I search for listings?",
@@ -194,7 +204,7 @@ async def menu_search(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await _show_menu(message, "Please set up filters first.")
+        await _show_menu(message, _RESTART_MSG)
         return
 
     msg = await message.answer("🔍 Searching OLX.uz for the best deals...")
@@ -236,7 +246,7 @@ async def menu_status(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await _show_menu(message, "No filters set yet.")
+        await _show_menu(message, _RESTART_MSG)
         return
 
     await message.answer(
@@ -355,6 +365,7 @@ async def filter_gender(message: Message, state: FSMContext):
     data = await state.get_data()
 
     user_id = message.from_user.id
+    register_user(user_id, message.chat.id)
     update_user(
         user_id,
         category=data.get("category", "arenda-dolgosrochnaya"),
@@ -401,7 +412,7 @@ async def cmd_search_now(message: Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await _show_menu(message, "Please set up filters first with /filters")
+        await _show_menu(message, _RESTART_MSG)
         return
 
     msg = await message.answer("🔍 Searching OLX.uz for the best deals...")
@@ -442,7 +453,7 @@ async def cmd_interval(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await _show_menu(message, "Please set up filters first.")
+        await _show_menu(message, _RESTART_MSG)
         return
     await state.set_state(IntervalSetup.waiting)
     await message.answer(
@@ -457,7 +468,7 @@ async def cmd_status(message: Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await message.answer("No filters set. Use /filters to configure.")
+        await message.answer(_RESTART_MSG, reply_markup=main_menu_keyboard())
         return
     await message.answer(
         format_filters(user),
