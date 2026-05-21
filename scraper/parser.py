@@ -32,6 +32,7 @@ class ParsedAd:
         location: str,
         image_url: Optional[str],
         post_url: str,
+        description: str = "",
     ):
         self.title = title
         self.price_uzs = price_uzs
@@ -40,6 +41,7 @@ class ParsedAd:
         self.location = location
         self.image_url = image_url
         self.post_url = post_url
+        self.description = description
 
     @property
     def days_ago(self) -> str:
@@ -66,6 +68,7 @@ def parse_card(card: Tag) -> Optional[ParsedAd]:
         price_uzs, price_usd = _find_price(card)
         location, date_str = _find_location_and_date(card)
         date = _parse_date_str(date_str)
+        description = _find_description(card, title)
 
         return ParsedAd(
             title=title,
@@ -75,6 +78,7 @@ def parse_card(card: Tag) -> Optional[ParsedAd]:
             location=location,
             image_url=image_url,
             post_url=post_url,
+            description=description,
         )
     except Exception:
         return None
@@ -152,6 +156,20 @@ def _find_location_and_date(card: Tag) -> tuple[str, str]:
             date_str = parts[1].strip() if len(parts) > 1 else text
             return location, date_str
     return "", ""
+
+
+def _find_description(card: Tag, title: str) -> str:
+    h4 = card.find("h4")
+    if h4:
+        for sibling in h4.find_next_siblings():
+            text = sibling.get_text(strip=True)
+            if len(text) > 3 and text != title:
+                class_names = sibling.get("class", [])
+                cn = " ".join(str(c) for c in class_names)
+                if "css-blr5zl" in cn or "css-1b24pxk" in cn:
+                    continue
+                return text
+    return ""
 
 
 def _parse_price(text: str) -> tuple[Optional[float], Optional[float]]:

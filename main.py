@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import os
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN
 from db.database import init_db, get_all_active_users
-from bot.handlers import router, run_backfill
+from bot.handlers import router
 from scheduler import BotScheduler
 
 logging.basicConfig(
@@ -16,14 +18,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(bot: Bot, scheduler: BotScheduler):
-    users = get_all_active_users()
-    if users:
-        logger.info("Starting backfill for %d user(s)...", len(users))
-        sent = await run_backfill(bot)
-        logger.info("Backfill complete: %d listings sent", sent)
-    scheduler.start()
-    logger.info("Bot is ready")
+async def handle_health(request):
+    return web.Response(text="ok")
+
+
+async def run_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    port = int(os.getenv("PORT", "8080"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("Health-check server started on port %d", port)
 
 
 async def main():
@@ -35,10 +42,18 @@ async def main():
     dp.include_router(router)
 
     scheduler = BotScheduler(bot)
+    scheduler.start()
 
-    @dp.startup()
-    async def startup():
-        await on_startup(bot, scheduler)
+    asyncio.create_task(run_web_server())
+
+    for user in get_all_active_users():
+        try:
+            await bot.send_message(
+                user["chat_id"],
+                "🔄 Bot was restarted. Send /start to refresh the menu.",
+            )
+        except Exception:
+            pass
 
     logger.info("Starting polling...")
     try:

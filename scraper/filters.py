@@ -1,4 +1,4 @@
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode
 
 BASE_LISTING_URL = "https://www.olx.uz/nedvizhimost/kvartiry"
 
@@ -21,35 +21,13 @@ ROOMS_MAP = {
 SEARCH_CATEGORIES = {"q-комнаты"}
 
 
-def build_search_url(
-    category: str = "arenda-dolgosrochnaya",
-    price_min: int = 0,
-    price_max: int = 0,
-    location: str = "",
-    rooms: str = "",
-    page: int = 1,
-) -> str:
+def build_search_url(category: str = "arenda-dolgosrochnaya", page: int = 1) -> str:
     cat_slug = CATEGORY_MAP.get(category, category)
     base = f"{BASE_LISTING_URL}/{cat_slug}/"
 
-    params = {}
+    params = {"search[order]": "created_at:desc", "page": str(page)}
 
-    if price_min > 0:
-        params["search[filter_float_price:from]"] = str(price_min)
-    if price_max > 0:
-        params["search[filter_float_price:to]"] = str(price_max)
-
-    params["search[order]"] = "created_at:desc"
-
-    if rooms and cat_slug not in SEARCH_CATEGORIES:
-        room_slug = ROOMS_MAP.get(rooms, rooms)
-        params["search[filter_enum_rooms][0]"] = room_slug
-
-    params["page"] = str(page)
-
-    if params:
-        base += "?" + urlencode(params, doseq=True)
-    return base
+    return base + "?" + urlencode(params, doseq=True)
 
 
 def is_ad_within_price(ad_price_uzs, ad_price_usd, price_min: int, price_max: int) -> bool:
@@ -87,6 +65,30 @@ CITY_ALIASES = {
     "gulistan": ["гулистан"],
     "kokand": ["коканд"],
 }
+
+
+import re
+
+GENDER_PREFIXES_WOMEN = ["девуш", "девоч", "женщ", "киз", "айол", "аёл"]
+GENDER_PREFIXES_MEN = ["мальч", "парен", "парн", "муж", "йигит", "эркак", "бола", "болла"]
+
+
+def gender_matches(ad_title: str, ad_description: str, user_pref: str) -> bool:
+    if user_pref == "any":
+        return True
+    text = (ad_title + " " + ad_description).lower()
+
+    def has_any(prefixes):
+        return any(re.search(rf"\b{p}", text) for p in prefixes)
+
+    women_only = has_any(GENDER_PREFIXES_WOMEN)
+    men_only = has_any(GENDER_PREFIXES_MEN)
+
+    if women_only and not men_only:
+        return user_pref == "women"
+    if men_only and not women_only:
+        return user_pref == "men"
+    return True
 
 
 def location_matches(ad_location: str, filter_location: str) -> bool:

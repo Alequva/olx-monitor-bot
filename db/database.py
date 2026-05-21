@@ -43,11 +43,15 @@ def init_db():
         );
     """)
 
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN backlog_days INTEGER DEFAULT 7")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    for col in [
+        ("backlog_days", "INTEGER DEFAULT 7"),
+        ("gender_pref", "TEXT DEFAULT 'any'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col[0]} {col[1]}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
 

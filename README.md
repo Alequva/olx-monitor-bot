@@ -1,22 +1,22 @@
 # OLX.uz Telegram Monitor Bot
 
-A Telegram bot that periodically scrapes [OLX.uz](https://www.olx.uz) for rental/sale listings and sends new matching posts directly to your Telegram — with images, price, date, and a direct link.
+A Telegram bot that periodically scrapes [OLX.uz](https://www.olx.uz) for rental/sale/room listings and sends new matching posts directly to your Telegram — with images, price, date, and a direct link.
 
 ## Features
 
 - **Automated scraping** — periodically fetches new listings from OLX.uz
-- **Smart filters** — filter by category (rent/sale/rooms), price range, city, and room count
+- **Smart filters** — filter by category (rent/sale/rooms), price range, city, room count, and gender preference
+- **Reply keybord** — persistent bottom bar replaces text input for all main actions
 - **Instant delivery** — each new matching listing is sent immediately as a photo message with details
-- **7-day backfill** — on first run, sends all matching listings from the past 7 days
 - **Deduplication** — tracks sent posts in SQLite so you never see the same listing twice
 - **Docker support** — easy deployment with docker-compose
-- **Configurable check interval** — 15min to 24h, settable via bot command
+- **Configurable check interval** — 15min to 24h, settable via keyboard
 
 ## Architecture
 
 ```
 olx-monitor-bot/
-├── main.py                 # Entry point — starts bot + scheduler
+├── main.py                 # Entry point — starts bot + scheduler + startup notification
 ├── config.py               # Env-based configuration
 ├── .env                    # Bot token (not committed)
 ├── .env.example            # Template for env vars
@@ -24,12 +24,12 @@ olx-monitor-bot/
 ├── Dockerfile              # Container build
 ├── docker-compose.yml      # Container orchestration
 ├── scraper/
-│   ├── olx.py              # Fetch OLX listing pages
+│   ├── olx.py              # Fetch OLX listing pages + local filtering
 │   ├── parser.py           # Parse HTML ad cards → structured data
-│   └── filters.py          # Build search URLs from user filters
+│   └── filters.py          # Search URL builder + price/location/gender filters
 ├── bot/
-│   ├── handlers.py         # /start, /filters, /search_now, /status, /interval
-│   └── keyboards.py        # Inline "View on OLX" button + filter keyboards
+│   ├── handlers.py         # All bot logic — commands, FSM, pagination, periodic checks
+│   └── keyboards.py        # Reply keyboards (main menu, interval, backlog, cities, etc.)
 ├── db/
 │   └── database.py         # SQLite CRUD operations
 └── scheduler.py            # APScheduler — periodic checks
@@ -40,8 +40,9 @@ data/                       # SQLite DB persisted here (gitignored)
 ### Data Flow
 
 ```
-[OLX.uz] → scraper fetches listing pages → parses ad cards →
-  extracts: image, title, price, date, location, link →
+[OLX.uz] → scraper fetches listing pages (no OLX-side filters) →
+  parses each <div data-cy="l-card"> → extracts all card text →
+  applies filters locally: price, location, gender, date →
   checks DB for duplicates → sends new posts to Telegram
 ```
 
@@ -65,92 +66,87 @@ data/                       # SQLite DB persisted here (gitignored)
 ### 2. Local Run
 
 ```bash
-# Clone / copy the project
 cd olx-monitor-bot
 
-# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate   # Windows
+source .venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Configure your bot token
 cp .env.example .env
 # Edit .env and add your BOT_TOKEN
 
-# Run
 python main.py
 ```
 
 ### 3. Docker
 
 ```bash
-# Copy and configure
 cp .env.example .env
 # Edit .env with your BOT_TOKEN
 
-# Build and run
 docker compose up -d
-
-# View logs
 docker compose logs -f
-
-# Stop
 docker compose down
 ```
 
-## Bot Commands
+## Bot Usage
 
-| Command | Description |
+### Reply Keyboard (persistent bottom bar)
+
+| Button | Action |
 |---|---|
-| `/start` | Welcome message + command overview |
-| `/filters` | Interactive filter setup (category → price → location → rooms) |
-| `/search_now` | Show 10 cheapest matching listings with "Load more" pagination |
-| `/backlog` | Set search period (1–30 days back) |
-| `/status` | Show current filter configuration |
-| `/interval` | Change periodic check frequency |
+| 🔍 Set Filters | Starts interactive filter setup: category → price min → price max → city → rooms → gender |
+| ⏰ Interval | Opens interval reply keyboard (15min / 30min / 1h / 3h / 6h / 12h / 24h) |
+| 📅 Backlog Days | Opens backlog reply keyboard (1 / 3 / 7 / 14 / 30 days) |
+| 🔎 Search Now | Searches OLX with current filters → shows 10 cheapest with "Load next 10" inline button |
+| 📋 Status | Shows current filter configuration |
 
-### Filter Options
+### Command Fallbacks
 
-**Category:**
-- Long-term rent (`arenda-dolgosrochnaya`)
-- Sale (`prodazha`)
-- Rooms (`komnaty`)
+All actions are also triggerable via `/start`, `/search_now`, `/interval`, `/backlog`, `/status`.
 
-**Price:** Enter min/max in USD. OLX prices in UZS are converted at ~12,000 UZS/USD.
+### Filter Flow Details
 
-**Location:** City name filter (e.g., "Tashkent", "Samarkand"). Leave empty for all.
+1. **Category** — Description of each type shown, then reply keyboard: Long-term rent / Sale / Rooms
+2. **Price min** — Dynamic reply keyboard: rent shows 0 / 100 / 200 / 300 / 500 / 800 / 1000 / 1500; sale shows 0 / 5000 / 10000 / 15000 / 20000 / 30000 / 40000 / 50000 + "Write custom"
+3. **Price max** — Same pattern
+4. **City** — Reply keyboard: 14 cities sorted by population + Any (skip)
+5. **Rooms** — Reply keyboard: 1 / 2 / 3 / 4+ / Any
+6. **Gender preference** — Reply keyboard: For women / For men / No preference
 
-**Rooms:** 1, 2, 3, or 4+.
+### Gender Filter
+
+Scans both title and description for gender-specific prefixes (word-boundary matched):
+
+| Women prefixes | Men prefixes |
+|---|---|
+| `девуш`, `девоч`, `женщ`, `киз`, `айол`, `аёл` | `мальч`, `паре`, `парн`, `муж`, `йигит`, `эркак`, `бола`, `болла` |
+
+Uses Russian, Uzbek Latin, and Uzbek Cyrillic (Russian alphabet) variants.
+
+- Listing matches only women keywords → shown only to women users
+- Listing matches only men keywords → shown only to men users
+- Matches both or neither → shown to everyone
 
 ## How Scraping Works
 
-1. The bot builds an OLX search URL from your filters:
+1. The bot builds a bare OLX search URL (category + page only — no price/rooms/location filters):
    ```
    https://www.olx.uz/nedvizhimost/kvartiry/arenda-dolgosrochnaya/
-   ?search[filter_float_price:from]=200
-   &search[filter_float_price:to]=500
-   &search[order]=created_at:desc
-   &page=1
+   ?search[order]=created_at:desc&page=1
    ```
 
-2. The listing page is fetched and parsed. Each ad card (`<div data-cy="l-card">`) is extracted for:
-   - Image URL (from `<img>` tag)
-   - Title (from link text)
-   - Price (in UZS or USD)
-   - Location + date text
-   - Post URL (from `<a href>`)
+2. All filtering (price, location, gender) is done **locally in Python** after parsing. OLX URL-side price/rooms filters trigger "extended_search_no_results_last_resort" and produce cross-category garbage.
 
-3. Russian date strings are parsed:
-   - `Сегодня в 04:41` → today
-   - `Вчера в 15:30` → yesterday
-   - `19 мая 2026 г.` → absolute date
+3. Each listing card (`<div data-cy="l-card">`) is parsed for:
+   - Full card text (title + description excerpt + any text)
+   - Image URL
+   - Price (UZS → USD at ~12,000 rate)
+   - Location + date (Russian + Uzbek date parsing)
+   - Post URL
 
-4. Listings are filtered by user criteria and checked against the sent_posts database.
-
-5. New matching listings are sent to Telegram as photo messages with an inline "View on OLX" button.
+4. Non-duplicate, in-range, matching listings are sent to Telegram.
 
 ## Database
 
@@ -159,49 +155,75 @@ docker compose down
 ### Schema
 
 **`users`** — stores user preferences:
-- `user_id` — Telegram user ID (PK)
-- `chat_id` — Telegram chat ID for sending messages
-- `category` — listing category slug
-- `price_min` / `price_max` — price range in USD
-- `location` — city filter string
-- `rooms` — rooms filter
-- `interval_m` — check frequency in minutes
-- `is_active` — whether user is active
+- `user_id`, `chat_id`, `category`, `price_min`, `price_max`, `location`, `rooms`
+- `interval_m`, `backlog_days`, `gender_pref` (TEXT: any/women/men)
+- `is_active`, `created_at`
 
 **`sent_posts`** — deduplication:
-- `user_id` + `post_url` (unique constraint)
-- `post_title` — for reference
-- `sent_at` — timestamp
+- `user_id` + `post_url` (unique)
+- `post_title`, `sent_at`
 
-## Changelog / Progress
+## Changelog
 
-### 2026-05-21 — Initial Implementation
+### 2026-05-21 — v1 — Initial Implementation
 
 - [x] Project scaffolded with full directory structure
-- [x] Database layer: users + sent_posts tables
+- [x] Database: users + sent_posts tables
 - [x] Scraper: OLX page fetching, HTML parsing, Russian date parsing
 - [x] Filter engine: category, price range, location, rooms
-- [x] Bot handlers: /start, /filters (interactive), /search_now, /status, /interval
+- [x] Bot handlers: /start, /filters (inline FSM), /search_now, /status, /interval
 - [x] Scheduler: periodic checks via APScheduler
 - [x] Docker build + docker-compose
-- [x] 7-day backfill on first run
-- [x] Deduplication (SQLite)
 - [x] Local git repo initialized
 
-### 2026-05-21 — Bugfixes
+### 2026-05-21 — v2 — Bugfixes
 
-- [x] Fixed `komnaty` category URL (was 404, now uses search query `/q-комнаты/`)
-- [x] Added city name translations for location filter (Tashkent→Ташкент, etc.)
+- [x] Fixed `komnaty` category URL (was 404, now /q-комнаты/)
+- [x] Added city name translations for location filter
 - [x] Fixed `sqlite3.Row` `.get()` AttributeError in `format_filters`
 - [x] Fixed startup coroutine not being awaited
 
-### 2026-05-21 — Pagination + Backlog Period
+### 2026-05-21 — v3 — Pagination + Backlog
 
-- [x] `/search_now` now shows 10 cheapest listings with "Load next 10" button
-- [x] Added `/backlog` command with inline keyboard (1, 3, 7, 14, 30 days)
+- [x] `/search_now`: 10 cheapest listings + "Load next 10" inline button
+- [x] `/backlog` command with inline keyboard (1/3/7/14/30 days)
 - [x] Search results cached in memory for pagination
-- [x] Backfill respects user's `backlog_days` setting
-- [x] Added `backlog_days` column to users table
+- [x] `backlog_days` column added to users table
+
+### 2026-05-21 — v4 — Reply Keyboards + UI Overhaul
+
+- [x] All menus changed from inline to reply keyboards (persistent bottom bar)
+- [x] `/start` shows main menu keyboard instead of raw text
+- [x] Category explanation text shown before selection
+- [x] City selection via reply keyboard (14 cities, population order)
+- [x] Interval & Backlog now use reply keyboards
+- [x] Filter flow: category → price → city → rooms → gender
+- [x] Price input uses dynamic reply keyboard (rent presets vs sale presets) + "Write custom"
+- [x] Removed startup backfill (no scan on launch)
+- [x] Startup notification: bot sends "/start" to active users on restart
+- [x] Removed all price/rooms/location filters from OLX search URLs — filtered locally only
+
+### 2026-05-21 — v5 — Gender Filter
+
+- [x] `gender_pref` column added to users table (TEXT DEFAULT 'any')
+- [x] `gender_matches()` function with prefix matching across Russian/Uzbek Latin/Uzbek Cyrillic
+- [x] Word-boundary regex to avoid false positives ("пара" ≠ "паре")
+- [x] Keyword prefixes: девуш, девоч, женщ, киз, айол, аёл / мальч, парен, парн, муж, йигит, эркак, бола, болла
+- [x] ParsedAd.description field (extracts full card text for broader matching)
+- [x] Gender reply keyboard in filter flow (For women / For men / No preference)
+- [x] Status display includes preference line
+
+### 2026-05-21 — v6 — Gender & Price Keyboard Fixes
+
+- [x] Added `девоч` to women prefixes (catches "девочек", "девочка", "девочки")
+- [x] Changed men prefix `паре` → `парен` (eliminates false positive "семейной паре", still matches "парень"/"паренек")
+- [x] Dynamic price keyboard — sale category shows higher presets (0 / 5k / 10k / 15k / 20k / 30k / 40k / 50k), rent shows original low presets
+- [x] Startup notification: bot sends "/start" to active users on restart
+
+## Planned Fixes
+
+- [ ] **Language selection**: Future feature — toggle bot UI between English/Russian/Uzbek
+- [ ] **Individual listing scraping**: Optional — fetch full description from individual listing pages for more accurate gender matching (currently uses card excerpt only)
 
 ## License
 

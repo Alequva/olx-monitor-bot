@@ -5,7 +5,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 
 from config import PAGE_SIZE
 from db.database import (
@@ -15,8 +15,13 @@ from db.database import (
 from scraper.olx import scrape_for_user
 from scraper.parser import ParsedAd
 from bot.keyboards import (
-    ad_keyboard, interval_keyboard, category_keyboard,
-    rooms_keyboard, backlog_keyboard, load_more_keyboard,
+    main_menu_keyboard,
+    ad_keyboard, interval_reply_keyboard,
+    category_reply_keyboard, cities_reply_keyboard,
+    rooms_reply_keyboard, get_price_keyboard,
+    gender_reply_keyboard,
+    backlog_reply_keyboard,
+    load_more_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,47 +36,244 @@ class FilterSetup(StatesGroup):
     price_max = State()
     location = State()
     rooms = State()
+    gender = State()
+
+
+class IntervalSetup(StatesGroup):
+    waiting = State()
+
+
+class BacklogSetup(StatesGroup):
+    waiting = State()
+
+
+INTERVAL_OPTIONS = {
+    "15min": 15, "30min": 30, "1h": 60, "3h": 180,
+    "6h": 360, "12h": 720, "24h": 1440,
+}
+
+BACKLOG_OPTIONS = {
+    "1 day": 1, "3 days": 3, "7 days": 7,
+    "14 days": 14, "30 days": 30,
+}
+
+CATEGORY_MAP = {
+    "Long-term rent": "arenda-dolgosrochnaya",
+    "Sale": "prodazha",
+    "Rooms": "komnaty",
+}
+
+CITY_MAP = {
+    "Tashkent": "tashkent", "Samarkand": "samarkand",
+    "Bukhara": "bukhara", "Fergana": "fergana",
+    "Namangan": "namangan", "Andijan": "andijan",
+    "Kokand": "kokand", "Nukus": "nukus",
+    "Urgench": "urgench", "Navoi": "navoi",
+    "Jizzakh": "jizzakh", "Qarshi": "qarshi",
+    "Termez": "termez", "Gulistan": "gulistan",
+}
+
+ROOMS_MAP = {
+    "1 room": "1", "2 rooms": "2", "3 rooms": "3",
+    "4+ rooms": "4+", "Any": "",
+}
+
+GENDER_MAP = {
+    "For women": "women",
+    "For men": "men",
+    "No preference": "any",
+}
+
+
+# ── Menu text handlers ────────────────────────────────────────
+
+
+async def _show_menu(message: Message, text: str = "", state: FSMContext | None = None):
+    if state:
+        await state.clear()
+    await message.answer(
+        text or "🏠 <b>OLX.uz Monitor</b>\n\nUse the menu below:",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(F.text == "🔍 Set Filters")
+async def menu_filters(message: Message, state: FSMContext):
+    await state.set_state(FilterSetup.category)
+    await message.answer(
+        "📋 <b>Listing Categories</b>\n\n"
+        "• <b>Long-term rent</b> — Apartments and houses for monthly rental\n"
+        "• <b>Sale</b> — Apartments and houses for purchase\n"
+        "• <b>Rooms</b> — Individual rooms in shared apartments",
+        parse_mode="HTML",
+    )
+    await message.answer(
+        "Select listing category:",
+        reply_markup=category_reply_keyboard(),
+    )
+
+
+@router.message(FilterSetup.category, F.text.in_(list(CATEGORY_MAP.keys())))
+async def filter_category(message: Message, state: FSMContext):
+    cat = CATEGORY_MAP[message.text]
+    await state.update_data(category=cat)
+    await state.set_state(FilterSetup.price_min)
+    await message.answer(
+        "Select or enter minimum price in USD (or send 0 for no minimum):\n"
+        "Example: 200",
+        reply_markup=get_price_keyboard(cat),
+    )
+
+
+@router.message(FilterSetup.category)
+async def filter_category_invalid(message: Message):
+    await message.answer("Please choose a category from the keyboard above.")
+
+
+@router.message(F.text == "⏰ Interval")
+async def menu_interval(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, "Please set up filters first.")
+        return
+
+    await state.set_state(IntervalSetup.waiting)
+    await message.answer(
+        f"⏰ Current interval: every {user['interval_m']} minutes\n\n"
+        "Select new check frequency:",
+        reply_markup=interval_reply_keyboard(),
+    )
+
+
+@router.message(IntervalSetup.waiting, F.text.in_(list(INTERVAL_OPTIONS.keys())))
+async def set_interval_reply(message: Message, state: FSMContext):
+    minutes = INTERVAL_OPTIONS[message.text]
+    update_user(message.from_user.id, interval_m=minutes)
+    await state.clear()
+    await message.answer(
+        f"✅ Check interval set to every {minutes} minutes.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(IntervalSetup.waiting)
+async def set_interval_invalid(message: Message):
+    await message.answer("Please choose an interval from the keyboard above.")
+
+
+@router.message(F.text == "📅 Backlog Days")
+async def menu_backlog(message: Message, state: FSMContext):
+    await state.set_state(BacklogSetup.waiting)
+    await message.answer(
+        "📅 How far back should I search for listings?",
+        reply_markup=backlog_reply_keyboard(),
+    )
+
+
+@router.message(BacklogSetup.waiting, F.text.in_(list(BACKLOG_OPTIONS.keys())))
+async def set_backlog_reply(message: Message, state: FSMContext):
+    days = BACKLOG_OPTIONS[message.text]
+    update_user(message.from_user.id, backlog_days=days)
+    await state.clear()
+    await message.answer(
+        f"✅ Will search up to {days} day{'s' if days > 1 else ''} back.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+@router.message(BacklogSetup.waiting)
+async def set_backlog_invalid(message: Message):
+    await message.answer("Please choose an option from the keyboard above.")
+
+
+@router.message(F.text == "🔎 Search Now")
+async def menu_search(message: Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, "Please set up filters first.")
+        return
+
+    msg = await message.answer("🔍 Searching OLX.uz for the best deals...")
+
+    ads = await scrape_for_user(
+        category=user["category"],
+        price_min=user["price_min"],
+        price_max=user["price_max"],
+        location=user["location"],
+        rooms=user["rooms"],
+        backlog_days=user["backlog_days"],
+        gender_pref=user["gender_pref"],
+        single_page=False,
+    )
+
+    if not ads:
+        await msg.edit_text(
+            "No listings found matching your filters in the last "
+            f"{user['backlog_days']} day(s).",
+        )
+        return
+
+    ads.sort(key=lambda a: (
+        a.price_usd if a.price_usd is not None else float("inf")
+    ))
+
+    _search_cache[user_id] = {
+        "results": ads,
+        "offset": 0,
+        "chat_id": message.chat.id,
+    }
+
+    await _send_batch(message.bot, user_id)
+
+
+@router.message(F.text == "📋 Status")
+async def menu_status(message: Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, "No filters set yet.")
+        return
+
+    await message.answer(
+        format_filters(user),
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+# ── /start ────────────────────────────────────────────────────
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     user_id = message.from_user.id
     chat_id = message.chat.id
     register_user(user_id, chat_id)
 
     await message.answer(
-        "👋 Welcome to OLX.uz Monitor Bot!\n\n"
-        "I will periodically check OLX.uz for new rental listings "
-        "and send them to you instantly.\n\n"
-        "Commands:\n"
-        "/filters — Set your search filters\n"
-        "/search_now — Show cheapest 10 matching listings\n"
-        "/backlog — Set how far back to search (1-30 days)\n"
-        "/status — View current filter settings\n"
-        "/interval — Change check frequency\n\n"
-        "Start by setting up your filters with /filters"
+        "🏠 <b>OLX.uz Monitor</b>\n\n"
+        "I will check OLX.uz for new listings and send them to you.\n"
+        "Use the menu below to get started.",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
     )
 
 
-@router.message(Command("filters"))
-async def cmd_filters(message: Message, state: FSMContext):
-    await state.set_state(FilterSetup.category)
+# ── Filters FSM (price + remaining) ───────────────────────────
+
+
+@router.message(FilterSetup.price_min, F.text == "Write custom")
+async def filter_price_min_custom(message: Message, state: FSMContext):
     await message.answer(
-        "Select listing category:",
-        reply_markup=category_keyboard(),
+        "Enter minimum price in USD (or send 0 for no minimum):",
+        reply_markup=ReplyKeyboardRemove(),
     )
-
-
-@router.callback_query(FilterSetup.category, F.data.startswith("cat:"))
-async def filter_category(cq: CallbackQuery, state: FSMContext):
-    cat = cq.data.split(":", 1)[1]
-    await state.update_data(category=cat)
-    await state.set_state(FilterSetup.price_min)
-    await cq.message.edit_text(
-        "Enter minimum price in USD (or send 0 for no minimum):\n"
-        "Example: 200"
-    )
-    await cq.answer()
 
 
 @router.message(FilterSetup.price_min)
@@ -80,11 +282,21 @@ async def filter_price_min(message: Message, state: FSMContext):
     if val is None or val < 0:
         await message.answer("Please enter a valid number (0 or more):")
         return
+    data = await state.get_data()
     await state.update_data(price_min=val)
     await state.set_state(FilterSetup.price_max)
     await message.answer(
         "Enter maximum price in USD (or send 0 for no maximum):\n"
-        "Example: 500"
+        "Example: 500",
+        reply_markup=get_price_keyboard(data.get("category", "")),
+    )
+
+
+@router.message(FilterSetup.price_max, F.text == "Write custom")
+async def filter_price_max_custom(message: Message, state: FSMContext):
+    await message.answer(
+        "Enter maximum price in USD (or send 0 for no maximum):",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -104,34 +316,45 @@ async def filter_price_max(message: Message, state: FSMContext):
     await state.update_data(price_max=val)
     await state.set_state(FilterSetup.location)
     await message.answer(
-        "Enter city name (or send 'any' for all locations):\n"
-        "Example: Tashkent"
+        "Select city:",
+        reply_markup=cities_reply_keyboard(),
     )
 
 
-@router.message(FilterSetup.location)
+@router.message(FilterSetup.location, F.text.in_(list(CITY_MAP.keys()) + ["Any (skip)"]))
 async def filter_location(message: Message, state: FSMContext):
-    loc = message.text.strip()
-    if loc.lower() in ("any", "skip", "-", ""):
-        loc = ""
+    loc = CITY_MAP.get(message.text, "")
     await state.update_data(location=loc)
     await state.set_state(FilterSetup.rooms)
     await message.answer(
         "Select number of rooms:",
-        reply_markup=rooms_keyboard(),
+        reply_markup=rooms_reply_keyboard(),
     )
 
 
-@router.callback_query(FilterSetup.rooms, F.data.startswith("rooms:"))
-async def filter_rooms(cq: CallbackQuery, state: FSMContext):
-    rooms = cq.data.split(":", 1)[1]
-    if rooms == "any":
-        rooms = ""
+@router.message(FilterSetup.location)
+async def filter_location_invalid(message: Message):
+    await message.answer("Please choose a city from the keyboard above.")
 
+
+@router.message(FilterSetup.rooms, F.text.in_(list(ROOMS_MAP.keys())))
+async def filter_rooms(message: Message, state: FSMContext):
+    rooms = ROOMS_MAP[message.text]
     await state.update_data(rooms=rooms)
+    await state.set_state(FilterSetup.gender)
+    await message.answer(
+        "Any gender preference for the flatmates?",
+        reply_markup=gender_reply_keyboard(),
+    )
+
+
+@router.message(FilterSetup.gender, F.text.in_(list(GENDER_MAP.keys())))
+async def filter_gender(message: Message, state: FSMContext):
+    gender_pref = GENDER_MAP[message.text]
+    await state.update_data(gender_pref=gender_pref)
     data = await state.get_data()
 
-    user_id = cq.from_user.id
+    user_id = message.from_user.id
     update_user(
         user_id,
         category=data.get("category", "arenda-dolgosrochnaya"),
@@ -139,34 +362,38 @@ async def filter_rooms(cq: CallbackQuery, state: FSMContext):
         price_max=data.get("price_max", 0),
         location=data.get("location", ""),
         rooms=data.get("rooms", ""),
+        gender_pref=gender_pref,
     )
 
     await state.clear()
     summary = format_filters(data)
-    await cq.message.edit_text(
-        f"✅ Filters saved!\n\n{summary}\n\n"
-        "Use /search_now to run a search with these filters."
+    await message.answer(
+        f"✅ Filters saved!\n\n{summary}",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
     )
-    await cq.answer()
+
+
+@router.message(FilterSetup.gender)
+async def filter_gender_invalid(message: Message):
+    await message.answer("Please choose a gender preference from the keyboard above.")
+
+
+@router.message(FilterSetup.rooms)
+async def filter_rooms_invalid(message: Message):
+    await message.answer("Please choose a room option from the keyboard above.")
+
+
+# ── Command fallbacks ─────────────────────────────────────────
 
 
 @router.message(Command("backlog"))
-async def cmd_backlog(message: Message):
+async def cmd_backlog(message: Message, state: FSMContext):
+    await state.set_state(BacklogSetup.waiting)
     await message.answer(
-        "How far back should I search for listings?",
-        reply_markup=backlog_keyboard(),
+        "📅 How far back should I search for listings?",
+        reply_markup=backlog_reply_keyboard(),
     )
-
-
-@router.callback_query(F.data.startswith("backlog:"))
-async def set_backlog(cq: CallbackQuery):
-    days = int(cq.data.split(":", 1)[1])
-    user_id = cq.from_user.id
-    update_user(user_id, backlog_days=days)
-    await cq.message.edit_text(
-        f"✅ Will search up to {days} day{'s' if days > 1 else ''} back."
-    )
-    await cq.answer()
 
 
 @router.message(Command("search_now"))
@@ -174,7 +401,7 @@ async def cmd_search_now(message: Message):
     user_id = message.from_user.id
     user = get_user(user_id)
     if not user:
-        await message.answer("Please set up filters first with /filters")
+        await _show_menu(message, "Please set up filters first with /filters")
         return
 
     msg = await message.answer("🔍 Searching OLX.uz for the best deals...")
@@ -186,13 +413,14 @@ async def cmd_search_now(message: Message):
         location=user["location"],
         rooms=user["rooms"],
         backlog_days=user["backlog_days"],
+        gender_pref=user["gender_pref"],
         single_page=False,
     )
 
     if not ads:
         await msg.edit_text(
             "No listings found matching your filters in the last "
-            f"{user['backlog_days']} day(s)."
+            f"{user['backlog_days']} day(s).",
         )
         return
 
@@ -207,6 +435,37 @@ async def cmd_search_now(message: Message):
     }
 
     await _send_batch(message.bot, user_id)
+
+
+@router.message(Command("interval"))
+async def cmd_interval(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, "Please set up filters first.")
+        return
+    await state.set_state(IntervalSetup.waiting)
+    await message.answer(
+        f"⏰ Current interval: every {user['interval_m']} minutes\n\n"
+        "Select new check frequency:",
+        reply_markup=interval_reply_keyboard(),
+    )
+
+
+@router.message(Command("status"))
+async def cmd_status(message: Message):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await message.answer("No filters set. Use /filters to configure.")
+        return
+    await message.answer(
+        format_filters(user),
+        parse_mode="HTML",
+    )
+
+
+# ── Search pagination ─────────────────────────────────────────
 
 
 @router.callback_query(F.data.startswith("load_more:"))
@@ -232,7 +491,7 @@ async def _send_batch(bot, user_id: int):
     if not batch:
         await bot.send_message(
             cache["chat_id"],
-            "No more listings to show."
+            "No more listings to show.",
         )
         del _search_cache[user_id]
         return
@@ -258,9 +517,9 @@ async def _send_batch(bot, user_id: int):
 
     text = header + "\n".join(lines)
 
-    total = len(results)
     if shown < total:
         kb = load_more_keyboard(user_id, total, shown)
+        text += "\n\n"
     else:
         kb = None
         text += "\n\n✅ All listings shown."
@@ -274,40 +533,7 @@ async def _send_batch(bot, user_id: int):
     )
 
 
-@router.message(Command("status"))
-async def cmd_status(message: Message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    if not user:
-        await message.answer("No filters set. Use /filters to configure.")
-        return
-    await message.answer(format_filters(user))
-
-
-@router.message(Command("interval"))
-async def cmd_interval(message: Message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    if not user:
-        await message.answer("Please set up filters first with /filters")
-        return
-
-    await message.answer(
-        f"Current interval: every {user['interval_m']} minutes\n\n"
-        "Select new check frequency:",
-        reply_markup=interval_keyboard(),
-    )
-
-
-@router.callback_query(F.data.startswith("interval:"))
-async def set_interval(cq: CallbackQuery):
-    minutes = int(cq.data.split(":", 1)[1])
-    user_id = cq.from_user.id
-    update_user(user_id, interval_m=minutes)
-    await cq.message.edit_text(
-        f"✅ Check interval set to every {minutes} minutes."
-    )
-    await cq.answer()
+# ── Send helpers ──────────────────────────────────────────────
 
 
 async def send_ad(bot, chat_id: int, ad):
@@ -352,6 +578,7 @@ async def run_periodic_check(bot) -> int:
                 location=user["location"],
                 rooms=user["rooms"],
                 backlog_days=user["backlog_days"],
+                gender_pref=user["gender_pref"],
                 single_page=True,
             )
             new_count = 0
@@ -370,50 +597,6 @@ async def run_periodic_check(bot) -> int:
         except Exception as e:
             logger.error("Error checking for user %d: %s", user["user_id"], e)
     return total_new
-
-
-async def run_backfill(bot) -> int:
-    users = get_all_active_users()
-    total_sent = 0
-    for user in users:
-        try:
-            days = user["backlog_days"]
-            await bot.send_message(
-                user["chat_id"],
-                f"🔄 Backfilling listings from the last {days} day(s)..."
-            )
-            ads = await scrape_for_user(
-                category=user["category"],
-                price_min=user["price_min"],
-                price_max=user["price_max"],
-                location=user["location"],
-                rooms=user["rooms"],
-                backlog_days=days,
-                single_page=False,
-            )
-            new_count = 0
-            for ad in ads:
-                if is_post_sent(user["user_id"], ad.post_url):
-                    continue
-                await send_ad(bot, user["chat_id"], ad)
-                mark_post_sent(user["user_id"], ad.post_url, ad.title)
-                new_count += 1
-            total_sent += new_count
-            if new_count == 0:
-                await bot.send_message(
-                    user["chat_id"],
-                    f"✅ Backfill complete — no matching listings "
-                    f"found in the last {days} day(s)."
-                )
-            else:
-                await bot.send_message(
-                    user["chat_id"],
-                    f"✅ Backfill complete — found {new_count} "
-                    f"matching listing(s)."
-                )
-        except Exception as e:
-            logger.error("Backfill error for user %d: %s", user["user_id"], e)
-    return total_sent
 
 
 def format_price(uzs, usd) -> str:
@@ -440,6 +623,8 @@ def format_filters(data) -> str:
     rooms = data.get("rooms", "") or "Any"
     interval = data.get("interval_m", 30)
     backlog = data.get("backlog_days", 7)
+    gender_labels = {"women": "For women", "men": "For men", "any": "No preference"}
+    gender = gender_labels.get(data.get("gender_pref", "any"), "No preference")
 
     return (
         f"📋 <b>Your Filters</b>\n"
@@ -448,6 +633,7 @@ def format_filters(data) -> str:
         f" - {'$' + str(pmax) if isinstance(pmax, int) else pmax}\n"
         f"• Location: {loc}\n"
         f"• Rooms: {rooms}\n"
+        f"• Preference: {gender}\n"
         f"• Lookback: {backlog} day{'s' if backlog > 1 else ''}\n"
         f"• Check interval: every {interval} min"
     )
