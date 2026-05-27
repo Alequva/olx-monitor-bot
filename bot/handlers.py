@@ -13,7 +13,7 @@ from db.database import (
     is_post_sent, mark_post_sent, get_all_active_users,
 )
 from scraper.olx import scrape_for_user
-from scraper.parser import ParsedAd
+from scraper.parser import ParsedAd, format_phone
 from bot.keyboards import (
     main_menu_keyboard,
     ad_keyboard, interval_reply_keyboard,
@@ -521,10 +521,16 @@ async def _send_batch(bot, user_id: int):
     lines = []
     for i, ad in enumerate(batch, start=offset + 1):
         price = format_price(ad.price_uzs, ad.price_usd)
-        lines.append(
-            f"<b>{i}.</b> <a href='{ad.post_url}'>{ad.title[:50]}</a>\n"
-            f"   💰 {price} | 📍 {ad.location[:25]} | 📅 {ad.days_ago}"
-        )
+        ad_lines = [f"<b>{i}.</b> <a href='{ad.post_url}'>{ad.title}</a>"]
+        ad_lines.append(f"💰 {price}")
+        ad_lines.append(f"📍 {ad.location}")
+        ad_lines.append(f"📅 {ad.days_ago}")
+        if ad.phone:
+            ad_lines.append(f"📞 {format_phone(ad.phone)}")
+        if ad.preferred_phone and ad.preferred_phone != ad.phone:
+            ad_lines.append(f"📞 Preferred: {format_phone(ad.preferred_phone)}")
+        ad_lines.append("─" * 25)
+        lines.append("\n".join(ad_lines))
 
     text = header + "\n".join(lines)
 
@@ -548,12 +554,19 @@ async def _send_batch(bot, user_id: int):
 
 
 async def send_ad(bot, chat_id: int, ad):
-    caption = (
-        f"<b>{ad.title}</b>\n\n"
-        f"💰 <b>Price:</b> {format_price(ad.price_uzs, ad.price_usd)}\n"
-        f"📍 <b>Location:</b> {ad.location}\n"
-        f"📅 {ad.formatted_date} | <i>posted {ad.days_ago}</i>"
-    )
+    title_line = f"<b>{ad.title}</b>"
+    price_line = f"💰 <b>Price:</b> {format_price(ad.price_uzs, ad.price_usd)}"
+    location_line = f"📍 <b>Location:</b> {ad.location}"
+    date_line = f"📅 {ad.formatted_date} | <i>posted {ad.days_ago}</i>"
+
+    extra = []
+    if ad.phone:
+        extra.append(f"📞 <b>Poster:</b> {format_phone(ad.phone)}")
+    if ad.preferred_phone and ad.preferred_phone != ad.phone:
+        extra.append(f"📞 <b>Preferred:</b> {format_phone(ad.preferred_phone)}")
+
+    parts = [title_line, "", price_line, location_line, date_line] + extra
+    caption = "\n".join(parts)
 
     if ad.image_url:
         try:

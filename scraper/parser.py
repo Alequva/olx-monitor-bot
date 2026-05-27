@@ -33,6 +33,8 @@ class ParsedAd:
         image_url: Optional[str],
         post_url: str,
         description: str = "",
+        phone: str = "",
+        preferred_phone: str = "",
     ):
         self.title = title
         self.price_uzs = price_uzs
@@ -42,6 +44,8 @@ class ParsedAd:
         self.image_url = image_url
         self.post_url = post_url
         self.description = description
+        self.phone = phone
+        self.preferred_phone = preferred_phone
 
     @property
     def days_ago(self) -> str:
@@ -203,6 +207,42 @@ def _parse_price(text: str) -> tuple[Optional[float], Optional[float]]:
         except ValueError:
             pass
     return None, None
+
+
+PHONE_PATTERN = re.compile(
+    r'(?:\+998|8)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}'
+)
+
+
+def extract_phones_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    raw = PHONE_PATTERN.findall(text)
+    seen = set()
+    result = []
+    for match in raw:
+        phone = normalize_phone(match)
+        if phone and phone not in seen:
+            seen.add(phone)
+            result.append(phone)
+    return result
+
+
+def normalize_phone(raw: str) -> str | None:
+    digits = re.sub(r'\D', '', raw)
+    if digits.startswith('8') and len(digits) == 11:
+        digits = '998' + digits[1:]
+    elif digits.startswith('998') and len(digits) == 12:
+        pass
+    else:
+        return None
+    return '+' + digits
+
+
+def format_phone(phone: str) -> str:
+    if len(phone) == 13 and phone.startswith('+998'):
+        return f"{phone[:4]} {phone[4:6]} {phone[6:9]} {phone[9:11]} {phone[11:]}"
+    return phone
 
 
 def _parse_date_str(date_str: str) -> datetime:
