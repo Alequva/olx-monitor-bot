@@ -13,7 +13,7 @@ from db.database import (
     is_post_sent, mark_post_sent, get_all_active_users,
 )
 from scraper.olx import scrape_for_user
-from scraper.parser import ParsedAd, format_phone
+from scraper.parser import ParsedAd, make_telegram_link
 from bot.keyboards import (
     main_menu_keyboard,
     ad_keyboard, interval_reply_keyboard,
@@ -526,9 +526,9 @@ async def _send_batch(bot, user_id: int):
         ad_lines.append(f"📍 {ad.location}")
         ad_lines.append(f"📅 {ad.days_ago}")
         if ad.phone:
-            ad_lines.append(f"📞 {format_phone(ad.phone)}")
-        if ad.preferred_phone and ad.preferred_phone != ad.phone:
-            ad_lines.append(f"📞 Preferred: {format_phone(ad.preferred_phone)}")
+            ad_lines.append(f'📞 <a href="{make_telegram_link(ad.phone)}">Write in Telegram</a>')
+        if ad.preferred_phone:
+            ad_lines.append(f'📞 <a href="{make_telegram_link(ad.preferred_phone)}">Write in Telegram</a>')
         ad_lines.append("─" * 25)
         lines.append("\n".join(ad_lines))
 
@@ -561,9 +561,9 @@ async def send_ad(bot, chat_id: int, ad):
 
     extra = []
     if ad.phone:
-        extra.append(f"📞 <b>Poster:</b> {format_phone(ad.phone)}")
-    if ad.preferred_phone and ad.preferred_phone != ad.phone:
-        extra.append(f"📞 <b>Preferred:</b> {format_phone(ad.preferred_phone)}")
+        extra.append(f'📞 <a href="{make_telegram_link(ad.phone)}">Write in Telegram</a>')
+    if ad.preferred_phone:
+        extra.append(f'📞 <a href="{make_telegram_link(ad.preferred_phone)}">Write in Telegram</a>')
 
     parts = [title_line, "", price_line, location_line, date_line] + extra
     caption = "\n".join(parts)
@@ -575,7 +575,7 @@ async def send_ad(bot, chat_id: int, ad):
                 photo=ad.image_url,
                 caption=caption,
                 parse_mode="HTML",
-                reply_markup=ad_keyboard(ad.post_url),
+                reply_markup=ad_keyboard(ad.post_url, make_telegram_link(ad.phone) if ad.phone else ""),
             )
             return
         except Exception:

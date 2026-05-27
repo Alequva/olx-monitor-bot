@@ -16,9 +16,11 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def ad_keyboard(post_url: str) -> InlineKeyboardMarkup:
+def ad_keyboard(post_url: str, telegram_url: str = "") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="View on OLX", url=post_url)
+    if telegram_url:
+        builder.button(text="Write in Telegram", url=telegram_url)
     return builder.as_markup()
 
 

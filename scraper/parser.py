@@ -210,7 +210,13 @@ def _parse_price(text: str) -> tuple[Optional[float], Optional[float]]:
 
 
 PHONE_PATTERN = re.compile(
-    r'(?:\+998|8)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}'
+    r'(?<!\d)'
+    r'(?:'
+    r'(?:\+[\s\-]?)?(?:998[\s\-]?\d{2}|8[\s\-]?\d{2}|\d{2})[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}'
+    r'|'
+    r'\d{3}[\s\-]?\d{3}[\s\-]?\d{3}'
+    r')'
+    r'(?!\d)'
 )
 
 
@@ -230,19 +236,25 @@ def extract_phones_from_text(text: str) -> list[str]:
 
 def normalize_phone(raw: str) -> str | None:
     digits = re.sub(r'\D', '', raw)
-    if digits.startswith('8') and len(digits) == 11:
-        digits = '998' + digits[1:]
-    elif digits.startswith('998') and len(digits) == 12:
-        pass
-    else:
-        return None
-    return '+' + digits
+    if len(digits) == 12 and digits.startswith('998'):
+        return '+' + digits
+    elif (len(digits) == 10 or len(digits) == 11) and digits.startswith('8'):
+        return '+998' + digits[1:]
+    elif len(digits) == 9:
+        return '+998' + digits
+    return None
 
 
 def format_phone(phone: str) -> str:
     if len(phone) == 13 and phone.startswith('+998'):
         return f"{phone[:4]} {phone[4:6]} {phone[6:9]} {phone[9:11]} {phone[11:]}"
     return phone
+
+
+def make_telegram_link(phone: str) -> str:
+    if phone.startswith('+'):
+        return f"https://t.me/{phone}"
+    return f"https://t.me/+{phone}"
 
 
 def _parse_date_str(date_str: str) -> datetime:
