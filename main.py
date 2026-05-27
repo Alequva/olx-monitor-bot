@@ -47,14 +47,29 @@ async def main():
 
     asyncio.create_task(run_web_server())
 
-    for user in get_all_active_users():
-        try:
-            await bot.send_message(
-                user["chat_id"],
-                "🔄 Bot was restarted. Send /start to refresh the menu.",
-            )
-        except Exception:
-            pass
+    active_users = get_all_active_users()
+    if active_users:
+        logger.info(
+            "Notifying %d active user(s) about restart...",
+            len(active_users),
+        )
+        for user in active_users:
+            try:
+                await bot.send_message(
+                    user["chat_id"],
+                    "🔄 Bot was restarted. Send /start to refresh the menu.",
+                )
+                logger.info("Restart notification sent to user %d", user["user_id"])
+            except Exception as e:
+                logger.warning(
+                    "Failed to notify user %d: %s", user["user_id"], e,
+                )
+    else:
+        logger.info(
+            "No active users in DB — "
+            "restart notification skipped (expected on Render with ephemeral storage). "
+            "In-handler restart prompts will be shown to users on next interaction.",
+        )
 
     logger.info("Starting polling...")
     try:

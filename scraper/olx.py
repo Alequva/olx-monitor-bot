@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
+from bs4 import BeautifulSoup
 
 from config import SCRAPER_DELAY, USER_AGENT
 from scraper.parser import (
@@ -79,12 +80,28 @@ async def scrape_listings(
 
 
 async def _attach_phones(ads: list[ParsedAd]):
-    for ad in ads:
-        desc_phones = extract_phones_from_text(ad.description)
-        if desc_phones:
-            ad.phone = desc_phones[0]
-            if len(desc_phones) > 1:
-                ad.preferred_phone = desc_phones[1]
+    sem = asyncio.Semaphore(3)
+
+    async def fetch(ad):
+        html = await fetch_page(ad.post_url)
+        page_text = ""
+        if html:
+            soup = BeautifulSoup(html, "lxml")
+            page_text = soup.get_text(separator=" ", strip=True)
+
+        combined = f"{ad.description} {page_text}"
+        all_phones = extract_phones_from_text(combined)
+        if all_phones:
+            ad.phone = all_phones[0]
+            if len(all_phones) > 1:
+                ad.preferred_phone = all_phones[1]
+
+    async def throttled_fetch(ad):
+        async with sem:
+            await fetch(ad)
+            await asyncio.sleep(SCRAPER_DELAY)
+
+    await asyncio.gather(*[throttled_fetch(ad) for ad in ads])
 
 
 async def scrape_for_user(
