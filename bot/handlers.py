@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 _search_cache: dict[int, dict] = {}
+_session_seen: dict[int, set[str]] = {}
 
 _RESTART_MSG = (
     "🔄 Bot was restarted on the server.\n"
@@ -231,10 +232,14 @@ async def menu_search(message: Message, state: FSMContext):
         a.price_usd if a.price_usd is not None else float("inf")
     ))
 
+    if user["session_dedup"] and user_id in _session_seen:
+        ads = [ad for ad in ads if ad.post_url not in _session_seen[user_id]]
+
     _search_cache[user_id] = {
         "results": ads,
         "offset": 0,
         "chat_id": message.chat.id,
+        "session_dedup": user["session_dedup"],
     }
 
     await _send_batch(message.bot, user_id)
@@ -256,6 +261,28 @@ async def menu_status(message: Message, state: FSMContext):
     )
 
 
+# ── Session Dedup toggle ──────────────────────────────────────
+
+
+@router.message(F.text == "🔄 Session Dedup")
+async def menu_session_dedup(message: Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    if not user:
+        await _show_menu(message, _RESTART_MSG)
+        return
+    new_val = 0 if user["session_dedup"] else 1
+    update_user(user_id, session_dedup=new_val)
+    status = "ON" if new_val else "OFF"
+    await message.answer(
+        f"🔄 Session deduplication: {status}\n\n"
+        "When ON, ads shown in /search_now won't appear again "
+        "in the current session.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
 # ── /start ────────────────────────────────────────────────────
 
 
@@ -265,6 +292,7 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     chat_id = message.chat.id
     register_user(user_id, chat_id)
+    _session_seen.pop(user_id, None)
 
     await message.answer(
         "🏠 <b>OLX.uz Monitor</b>\n\n"
@@ -439,41 +467,17 @@ async def cmd_search_now(message: Message):
         a.price_usd if a.price_usd is not None else float("inf")
     ))
 
+    if user["session_dedup"] and user_id in _session_seen:
+        ads = [ad for ad in ads if ad.post_url not in _session_seen[user_id]]
+
     _search_cache[user_id] = {
         "results": ads,
         "offset": 0,
         "chat_id": message.chat.id,
+        "session_dedup": user["session_dedup"],
     }
 
     await _send_batch(message.bot, user_id)
-
-
-@router.message(Command("interval"))
-async def cmd_interval(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    if not user:
-        await _show_menu(message, _RESTART_MSG)
-        return
-    await state.set_state(IntervalSetup.waiting)
-    await message.answer(
-        f"⏰ Current interval: every {user['interval_m']} minutes\n\n"
-        "Select new check frequency:",
-        reply_markup=interval_reply_keyboard(),
-    )
-
-
-@router.message(Command("status"))
-async def cmd_status(message: Message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    if not user:
-        await message.answer(_RESTART_MSG, reply_markup=main_menu_keyboard())
-        return
-    await message.answer(
-        format_filters(user),
-        parse_mode="HTML",
-    )
 
 
 # ── Search pagination ─────────────────────────────────────────
@@ -508,6 +512,9 @@ async def _send_batch(bot, user_id: int):
         return
 
     cache["offset"] = offset + len(batch)
+
+    if cache.get("session_dedup"):
+        _session_seen.setdefault(user_id, set()).update(a.post_url for a in batch)
 
     total = len(results)
     shown = cache["offset"]
@@ -650,6 +657,8 @@ def format_filters(data) -> str:
     gender_labels = {"women": "For women", "men": "For men", "any": "No preference"}
     gender = gender_labels.get(data.get("gender_pref", "any"), "No preference")
 
+    dedup = "ON" if data.get("session_dedup") else "OFF"
+
     return (
         f"📋 <b>Your Filters</b>\n"
         f"• Category: {cat}\n"
@@ -659,7 +668,8 @@ def format_filters(data) -> str:
         f"• Rooms: {rooms}\n"
         f"• Preference: {gender}\n"
         f"• Lookback: {backlog} day{'s' if backlog > 1 else ''}\n"
-        f"• Check interval: every {interval} min"
+        f"• Check interval: every {interval} min\n"
+        f"• Session Dedup: {dedup}"
     )
 
 

@@ -75,6 +75,12 @@ async def scrape_listings(
 
     if results:
         await _attach_phones(results)
+        # Second gender pass with full page text
+        if gender_pref != "any":
+            results = [
+                ad for ad in results
+                if gender_matches(ad.title, f"{ad.description} {ad.full_text}", gender_pref)
+            ]
 
     return results
 
@@ -88,6 +94,7 @@ async def _attach_phones(ads: list[ParsedAd]):
         if html:
             soup = BeautifulSoup(html, "lxml")
             page_text = soup.get_text(separator=" ", strip=True)
+        ad.full_text = page_text
 
         combined = f"{ad.description} {page_text}"
         all_phones = extract_phones_from_text(combined)

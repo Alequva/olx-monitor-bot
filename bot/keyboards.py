@@ -10,6 +10,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🔍 Set Filters")],
             [KeyboardButton(text="⏰ Interval"), KeyboardButton(text="📅 Backlog Days")],
+            [KeyboardButton(text="🔄 Session Dedup")],
             [KeyboardButton(text="🔎 Search Now"), KeyboardButton(text="📋 Status")],
         ],
         resize_keyboard=True,

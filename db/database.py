@@ -46,6 +46,7 @@ def init_db():
     for col in [
         ("backlog_days", "INTEGER DEFAULT 7"),
         ("gender_pref", "TEXT DEFAULT 'any'"),
+        ("session_dedup", "INTEGER DEFAULT 0"),
     ]:
         try:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col[0]} {col[1]}")

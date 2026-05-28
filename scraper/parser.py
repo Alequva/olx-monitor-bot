@@ -35,6 +35,7 @@ class ParsedAd:
         description: str = "",
         phone: str = "",
         preferred_phone: str = "",
+        full_text: str = "",
     ):
         self.title = title
         self.price_uzs = price_uzs
@@ -46,6 +47,7 @@ class ParsedAd:
         self.description = description
         self.phone = phone
         self.preferred_phone = preferred_phone
+        self.full_text = full_text
 
     @property
     def days_ago(self) -> str:

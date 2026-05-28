@@ -69,8 +69,16 @@ CITY_ALIASES = {
 
 import re
 
-GENDER_PREFIXES_WOMEN = ["девуш", "девоч", "женщ", "киз", "айол", "аёл"]
-GENDER_PREFIXES_MEN = ["мальч", "парен", "парн", "муж", "йигит", "эркак", "бола", "болла"]
+GENDER_PREFIXES_WOMEN = [
+    "девуш", "девоч", "женщ",
+    "киз", "айол", "аёл", "қиз", "хотин", "хоним",
+    "qiz", "ayol", "xotin", "xonim",
+]
+GENDER_PREFIXES_MEN = [
+    "мальч", "парен", "парн", "муж",
+    "йигит", "эркак", "бола", "болла", "жаноб",
+    "yigit", "erkak", "bola", "janob",
+]
 
 
 def gender_matches(ad_title: str, ad_description: str, user_pref: str) -> bool:
@@ -79,7 +87,7 @@ def gender_matches(ad_title: str, ad_description: str, user_pref: str) -> bool:
     text = (ad_title + " " + ad_description).lower()
 
     def has_any(prefixes):
-        return any(re.search(rf"\b{p}", text) for p in prefixes)
+        return any(re.search(rf"(?<!\w){p}", text) for p in prefixes)
 
     women_only = has_any(GENDER_PREFIXES_WOMEN)
     men_only = has_any(GENDER_PREFIXES_MEN)
